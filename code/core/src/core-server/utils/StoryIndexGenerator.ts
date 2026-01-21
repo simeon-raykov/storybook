@@ -557,12 +557,13 @@ export class StoryIndexGenerator {
         
         // Check if the referenced file has a syntax error
         let hasSyntaxError = false;
-        this.specifierToCache.forEach((cache) => {
+        for (const cache of this.specifierToCache.values()) {
           const entry = cache[absoluteOf];
           if (entry && entry.type === 'error' && entry.err.isSyntaxError) {
             hasSyntaxError = true;
+            break; // Early exit once we find a syntax error
           }
-        });
+        }
         
         dependencies.forEach((dep) => {
           if (dep.entries.length > 0) {
@@ -880,7 +881,16 @@ export class StoryIndexGenerator {
               const docsDeps = entry.storiesImports.map((p) =>
                 resolve(this.options.workingDir, p)
               );
-              if (docsDeps.some((dep) => normalize(dep).startsWith(normalize(absolutePath)))) {
+              // Use exact match comparison - the resolved import path should match the absolute path
+              // (the import path may not have an extension, so we check if the absolute path starts with it)
+              if (docsDeps.some((dep) => {
+                const normalizedDep = normalize(dep);
+                const normalizedAbsolute = normalize(absolutePath);
+                // Check if the resolved import matches the file path
+                // Import paths don't include extensions, so check if the file path starts with the import
+                return normalizedAbsolute === normalizedDep || 
+                       normalizedAbsolute.startsWith(`${normalizedDep}.`);
+              })) {
                 otherCache[path] = false;
               }
             }
