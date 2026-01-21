@@ -1950,6 +1950,117 @@ describe('StoryIndexGenerator', () => {
           `[Error: Unable to index ./src/docs2/MetaOf.mdx]`
         );
       });
+
+      it('marks syntax errors with isSyntaxError flag', async () => {
+        const csfSpecifier: NormalizedStoriesSpecifier = normalizeStoriesEntry(
+          './errors/SyntaxError.stories.ts',
+          options
+        );
+
+        const generator = new StoryIndexGenerator([csfSpecifier], options);
+        await generator.initialize();
+        
+        // Getting the index should throw an error
+        await expect(() => generator.getIndex()).rejects.toThrow();
+
+        // But the error should be marked as a syntax error
+        const cache = (generator as any).specifierToCache.get(csfSpecifier);
+        const errorEntry = Object.values(cache).find(
+          (entry: any) => entry && entry.type === 'error'
+        ) as any;
+        
+        expect(errorEntry).toBeDefined();
+        expect(errorEntry.type).toBe('error');
+        expect(errorEntry.err.isSyntaxError).toBe(true);
+      });
+
+      it('does not throw invariant error for MDX files depending on files with syntax errors', async () => {
+        const csfSpecifier: NormalizedStoriesSpecifier = normalizeStoriesEntry(
+          './errors/SyntaxError.stories.ts',
+          options
+        );
+        const docsSpecifier: NormalizedStoriesSpecifier = normalizeStoriesEntry(
+          './errors/SyntaxError.mdx',
+          options
+        );
+
+        const generator = new StoryIndexGenerator([csfSpecifier, docsSpecifier], options);
+        await generator.initialize();
+        
+        // Should throw error, but only for the syntax error file, not the MDX file
+        await expect(() => generator.getIndex()).rejects.toThrow();
+
+        // Check that the MDX file was skipped (returned false), not errored
+        const docsCache = (generator as any).specifierToCache.get(docsSpecifier);
+        const mdxEntry = Object.values(docsCache)[0];
+        
+        // The MDX file should either be false (skipped) or not indexed
+        expect(mdxEntry === false || mdxEntry === undefined).toBe(true);
+      });
+
+      it('recovers when syntax error is fixed', async () => {
+        const csfSpecifier: NormalizedStoriesSpecifier = normalizeStoriesEntry(
+          './errors/SyntaxError.stories.ts',
+          options
+        );
+
+        const generator = new StoryIndexGenerator([csfSpecifier], options);
+        await generator.initialize();
+        
+        // First, getting the index should throw an error
+        await expect(() => generator.getIndex()).rejects.toThrow();
+
+        // Now simulate fixing the syntax error by invalidating the file
+        generator.invalidate('./errors/SyntaxError.stories.ts', false);
+
+        // Mock the readCsf to return valid data instead of throwing
+        readCsfMock.mockResolvedValueOnce({
+          parse: () => ({
+            _stories: {},
+            meta: {
+              title: 'Fixed Story',
+              component: {},
+            },
+            stories: {
+              Story1: {
+                name: 'Story 1',
+              },
+            },
+          }),
+          indexInputs: [],
+        } as any);
+
+        // After invalidation and fixing, getting the index should succeed
+        const { storyIndex } = await generator.getIndex();
+        expect(storyIndex.entries).toBeDefined();
+      });
+
+      it('invalidates dependent MDX files when error is fixed', async () => {
+        const csfSpecifier: NormalizedStoriesSpecifier = normalizeStoriesEntry(
+          './errors/SyntaxError.stories.ts',
+          options
+        );
+        const docsSpecifier: NormalizedStoriesSpecifier = normalizeStoriesEntry(
+          './errors/SyntaxError.mdx',
+          options
+        );
+
+        const generator = new StoryIndexGenerator([csfSpecifier, docsSpecifier], options);
+        await generator.initialize();
+        
+        // Should throw error
+        await expect(() => generator.getIndex()).rejects.toThrow();
+
+        // Simulate fixing the syntax error
+        generator.invalidate('./errors/SyntaxError.stories.ts', false);
+
+        // Check that the dependent MDX file cache entry was also invalidated
+        const docsCache = (generator as any).specifierToCache.get(docsSpecifier);
+        const mdxEntry = Object.values(docsCache)[0];
+        
+        // The MDX file should be marked as false (needs re-indexing)
+        expect(mdxEntry).toBe(false);
+      });
     });
 
     describe('warnings', () => {
