@@ -554,17 +554,34 @@ export class StoryIndexGenerator {
       let csfEntry: StoryIndexEntryWithExtra | undefined;
       if (result.of) {
         const absoluteOf = makeAbsolute(result.of, normalizedPath, this.options.workingDir);
-        
+
         // Check if the referenced file has a syntax error
         let hasSyntaxError = false;
         for (const cache of this.specifierToCache.values()) {
-          const entry = cache[absoluteOf];
-          if (entry && entry.type === 'error' && entry.err.isSyntaxError) {
-            hasSyntaxError = true;
-            break; // Early exit once we find a syntax error
+          // Check for exact match or startsWith match (since import paths might not have extensions)
+          const entries = Object.entries(cache);
+          for (const [path, entry] of entries) {
+            if (
+              entry &&
+              entry.type === 'error' &&
+              entry.err.isSyntaxError &&
+              (normalize(path) === normalize(absoluteOf) ||
+                normalize(path).startsWith(`${normalize(absoluteOf)}.`))
+            ) {
+              hasSyntaxError = true;
+              break;
+            }
+          }
+          if (hasSyntaxError) {
+            break;
           }
         }
-        
+
+        // If there's a syntax error, return false to skip indexing this MDX file for now
+        if (hasSyntaxError) {
+          return false;
+        }
+
         dependencies.forEach((dep) => {
           if (dep.entries.length > 0) {
             const first = dep.entries.find((e) => e.type !== 'docs') as StoryIndexEntryWithExtra;
@@ -582,8 +599,7 @@ export class StoryIndexGenerator {
         });
 
         // Only throw invariant error if the file truly doesn't exist or isn't being processed
-        // Don't throw if it has a syntax error (it exists but can't be parsed yet)
-        if (!csfEntry && !hasSyntaxError) {
+        if (!csfEntry) {
           invariant(
             false,
             dedent`
@@ -595,11 +611,6 @@ export class StoryIndexGenerator {
               - If so, has the file successfully loaded in Storybook and are its stories visible?
             `
           );
-        }
-        
-        // If there's a syntax error, return false to skip indexing this MDX file for now
-        if (hasSyntaxError) {
-          return false;
         }
       }
 
@@ -869,7 +880,7 @@ export class StoryIndexGenerator {
       // File changed but not removed - clear the cache entry to force re-indexing
       // This is critical for recovering from syntax errors
       cache[absolutePath] = false;
-      
+
       // Also invalidate any MDX files that depend on this file if it was an error
       if (cacheEntry && cacheEntry.type === 'error') {
         // Find all MDX files in the cache and invalidate them if they depend on this file
@@ -878,19 +889,21 @@ export class StoryIndexGenerator {
             const entry = otherCache[path];
             if (entry && entry.type === 'docs') {
               // Check if this docs file depends on the file we're invalidating
-              const docsDeps = entry.storiesImports.map((p) =>
-                resolve(this.options.workingDir, p)
-              );
+              const docsDeps = entry.storiesImports.map((p) => resolve(this.options.workingDir, p));
               // Use exact match comparison - the resolved import path should match the absolute path
               // (the import path may not have an extension, so we check if the absolute path starts with it)
-              if (docsDeps.some((dep) => {
-                const normalizedDep = normalize(dep);
-                const normalizedAbsolute = normalize(absolutePath);
-                // Check if the resolved import matches the file path
-                // Import paths don't include extensions, so check if the file path starts with the import
-                return normalizedAbsolute === normalizedDep || 
-                       normalizedAbsolute.startsWith(`${normalizedDep}.`);
-              })) {
+              if (
+                docsDeps.some((dep) => {
+                  const normalizedDep = normalize(dep);
+                  const normalizedAbsolute = normalize(absolutePath);
+                  // Check if the resolved import matches the file path
+                  // Import paths don't include extensions, so check if the file path starts with the import
+                  return (
+                    normalizedAbsolute === normalizedDep ||
+                    normalizedAbsolute.startsWith(`${normalizedDep}.`)
+                  );
+                })
+              ) {
                 otherCache[path] = false;
               }
             }
