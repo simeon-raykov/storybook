@@ -3,11 +3,13 @@ import slash from 'slash';
 
 export class IndexingError extends Error {
   importPaths: string[];
+  isSyntaxError?: boolean;
 
-  constructor(message: string, importPaths: string[], stack?: string) {
+  constructor(message: string, importPaths: string[], stack?: string, isSyntaxError = false) {
     super();
     this.message = message;
     this.importPaths = importPaths;
+    this.isSyntaxError = isSyntaxError;
     if (stack) {
       this.stack = stack;
     }
